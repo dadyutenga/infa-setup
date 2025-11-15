@@ -1,173 +1,67 @@
-#!/bin/bash
-
-### Infra Setup Master Script
+#!/usr/bin/env bash
 set -euo pipefail
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="$BASE_DIR/logs"
-MODULES_DIR="$BASE_DIR/modules"
-mkdir -p "$LOG_DIR"
+LOG_DIR="logs"
+INFRA_LOG="${LOG_DIR}/infra.log"
+MODULE_LOG_DIR="${LOG_DIR}/modules"
 
-LOG_FILE="$LOG_DIR/infra-install.log"
-touch "$LOG_FILE"
-chmod 600 "$LOG_FILE"
+COLOR_INFO="\033[1;34m"
+COLOR_OK="\033[1;32m"
+COLOR_SKIP="\033[1;33m"
+COLOR_ERROR="\033[1;31m"
+COLOR_RESET="\033[0m"
 
-# Redirect stdout/stderr to log while preserving console output
-exec > >(tee -a "$LOG_FILE") 2>&1
+mkdir -p "${MODULE_LOG_DIR}"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+touch "${INFRA_LOG}"
 
-MODULE_LOG_FILE=""
-CURRENT_MODULE=""
+if [ ! -w "${LOG_DIR}" ]; then
+  echo -e "${COLOR_ERROR}[ERROR] Unable to write to logs directory${COLOR_RESET}" >&2
+  exit 1
+fi
 
-log_status() {
-    local level="$1"
-    shift
-    local message="$*"
-    local color="$NC"
-    case "$level" in
-        INFO) color="$BLUE" ;;
-        OK) color="$GREEN" ;;
-        SKIP) color="$YELLOW" ;;
-        ERROR) color="$RED" ;;
-    esac
-    echo -e "${color}[${level}]${NC} $message"
-    if [[ -n "${MODULE_LOG_FILE:-}" ]]; then
-        echo "[$level] $(date '+%Y-%m-%d %H:%M:%S') $message" >> "$MODULE_LOG_FILE"
-    fi
-}
-
-log_info() {
-    log_status "INFO" "$@"
-}
-
-log_ok() {
-    log_status "OK" "$@"
-}
-
-log_skip() {
-    log_status "SKIP" "$@"
-}
-
-log_error() {
-    log_status "ERROR" "$@"
-}
-
-run_cmd() {
-    local description="$1"
-    shift
-    log_info "$description"
-    local status
-    if [[ -n "${MODULE_LOG_FILE:-}" ]]; then
-        "$@" 2>&1 | tee -a "$MODULE_LOG_FILE"
-        status=${PIPESTATUS[0]}
-    else
-        "$@" 2>&1
-        status=$?
-    fi
-    return $status
-}
-
-require_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}[FATAL]${NC} This script must be run with sudo or as root." >&2
-        exit 1
-    fi
-}
-
-load_module() {
-    local module_file="$1"
-    if [[ ! -f "$MODULES_DIR/$module_file" ]]; then
-        echo -e "${RED}[FATAL]${NC} Missing module: $module_file" >&2
-        exit 1
-    fi
-    # shellcheck disable=SC1090
-    source "$MODULES_DIR/$module_file"
+log_message() {
+  local level="$1"
+  local message="$2"
+  local color="$3"
+  echo -e "${color}[${level}] ${message}${COLOR_RESET}"
 }
 
 run_module() {
-    local module_name="$1"
-    local module_function="$2"
-    CURRENT_MODULE="$module_name"
-    MODULE_LOG_FILE="$LOG_DIR/${module_name}.log"
-    : > "$MODULE_LOG_FILE"
-    chmod 600 "$MODULE_LOG_FILE"
+  local module_name="$1"
+  local module_script="modules/${module_name}.sh"
+  local module_log="${MODULE_LOG_DIR}/${module_name}.log"
 
-    log_info "Starting module: $module_name"
-    echo "---- Module $module_name started at $(date) ----" >> "$MODULE_LOG_FILE"
+  if [ ! -f "${module_script}" ]; then
+    log_message "ERROR" "Module ${module_name} not found" "${COLOR_ERROR}"
+    exit 1
+  fi
 
-    if ! "$module_function"; then
-        log_error "Module $module_name failed. Check $MODULE_LOG_FILE for details."
-        exit 1
-    fi
+  log_message "INFO" "${module_name} module starting" "${COLOR_INFO}"
 
-    log_ok "Module $module_name completed successfully."
-    echo "---- Module $module_name completed at $(date) ----" >> "$MODULE_LOG_FILE"
-    echo "" >> "$MODULE_LOG_FILE"
-    MODULE_LOG_FILE=""
-    CURRENT_MODULE=""
+  if ! {
+    # shellcheck disable=SC1090
+    source "${module_script}"
+  } >> >(tee -a "${INFRA_LOG}" "${module_log}") 2>&1; then
+    log_message "ERROR" "${module_name} module failed" "${COLOR_ERROR}"
+    exit 1
+  fi
+
+  log_message "OK" "${module_name} module completed" "${COLOR_OK}"
 }
 
-update_package_index() {
-    case "$PACKAGE_MANAGER" in
-        apt)
-            run_cmd "Updating apt package index" apt-get update
-            ;;
-        dnf)
-            run_cmd "Refreshing dnf metadata" dnf makecache --refresh -y
-            ;;
-        *)
-            log_error "Unknown package manager: $PACKAGE_MANAGER"
-            return 1
-            ;;
-    esac
-}
+modules=(
+  "os-detect"
+  "docker"
+  "nginx"
+  "mysql"
+  "postgres"
+  "redis"
+  "languages"
+  "uptime-kuma"
+  "firewall"
+)
 
-install_packages() {
-    local packages=("$@")
-    case "$PACKAGE_MANAGER" in
-        apt)
-            run_cmd "Installing packages: ${packages[*]}" apt-get install -y "${packages[@]}"
-            ;;
-        dnf)
-            run_cmd "Installing packages: ${packages[*]}" dnf install -y "${packages[@]}"
-            ;;
-        *)
-            log_error "Unsupported package manager: $PACKAGE_MANAGER"
-            return 1
-            ;;
-    esac
-}
-
-require_root
-
-load_module "os-detect.sh"
-load_module "docker.sh"
-load_module "nginx.sh"
-load_module "mysql.sh"
-load_module "postgres.sh"
-load_module "redis.sh"
-load_module "rabbitmq.sh"
-load_module "languages.sh"
-load_module "uptime-kuma.sh"
-load_module "firewall.sh"
-
-run_module "os-detect" run_os_detect
-
-log_info "Detected OS: ${OS_NAME:-unknown} (${OS_ID:-?}) ${OS_VERSION_ID:-?}"
-
-run_module "docker" run_docker
-run_module "nginx" run_nginx
-run_module "mysql" run_mysql
-run_module "postgres" run_postgres
-run_module "redis" run_redis
-run_module "rabbitmq" run_rabbitmq
-run_module "languages" run_languages
-run_module "uptime-kuma" run_uptime_kuma
-run_module "firewall" run_firewall
-
-log_ok "Infrastructure setup complete! Review logs in $LOG_DIR."
+for module in "${modules[@]}"; do
+  run_module "${module}"
+done
