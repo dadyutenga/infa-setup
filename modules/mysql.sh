@@ -1,35 +1,33 @@
-#!/bin/bash
-### MODULE: MySQL / MariaDB
+#!/usr/bin/env bash
+set -euo pipefail
 
-run_mysql() {
-    local service_name="mysql"
-
-    if command -v mysql >/dev/null 2>&1; then
-        if systemctl list-units --type=service | grep -q "mariadb.service"; then
-            service_name="mariadb"
-        fi
-        log_skip "MySQL/MariaDB already installed. Ensuring service is enabled."
-        run_cmd "Ensuring ${service_name} service" systemctl enable --now "$service_name"
-        return 0
-    fi
-
-    update_package_index
-
-    if [[ "$PACKAGE_MANAGER" == "apt" ]]; then
-        install_packages default-mysql-server
-    elif [[ "$PACKAGE_MANAGER" == "dnf" ]]; then
-        install_packages mariadb-server mariadb
-        service_name="mariadb"
-    else
-        log_error "Unsupported package manager for MySQL installation."
-        return 1
-    fi
-
-    if systemctl list-units --type=service | grep -q "mariadb.service"; then
-        service_name="mariadb"
-    fi
-
-    run_cmd "Enabling and starting ${service_name}" systemctl enable --now "$service_name"
-    log_ok "MySQL/MariaDB installation completed."
-    return 0
+check_service() {
+  systemctl list-unit-files | grep -qE '^mariadb.service|^mysql.service'
 }
+
+if check_service; then
+  echo "[SKIP] MySQL/MariaDB service already installed"
+else
+  echo "[INFO] Installing MariaDB server"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y mariadb-server
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -y install mariadb-server
+  else
+    echo "[ERROR] Unsupported package manager for MariaDB installation"
+    return 1
+  fi
+fi
+
+echo "[INFO] Enabling and starting MariaDB/MySQL"
+if systemctl list-unit-files | grep -q '^mariadb.service'; then
+  systemctl enable mariadb
+  systemctl start mariadb
+else
+  systemctl enable mysql
+  systemctl start mysql
+fi
+
+echo "[OK] MariaDB/MySQL ready"

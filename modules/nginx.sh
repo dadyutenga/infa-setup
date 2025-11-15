@@ -1,16 +1,24 @@
-#!/bin/bash
-### MODULE: Nginx
+#!/usr/bin/env bash
+set -euo pipefail
 
-run_nginx() {
-    if command -v nginx >/dev/null 2>&1; then
-        log_skip "Nginx already installed. Ensuring service is enabled."
-        run_cmd "Ensuring Nginx service" systemctl enable --now nginx
-        return 0
-    fi
+if command -v nginx >/dev/null 2>&1; then
+  echo "[SKIP] Nginx already installed"
+else
+  echo "[INFO] Installing Nginx"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y nginx
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -y install nginx
+  else
+    echo "[ERROR] Unsupported package manager for Nginx installation"
+    return 1
+  fi
+fi
 
-    update_package_index
-    install_packages nginx
-    run_cmd "Enabling and starting Nginx" systemctl enable --now nginx
-    log_ok "Nginx installation complete."
-    return 0
-}
+echo "[INFO] Enabling and starting Nginx"
+systemctl enable nginx
+systemctl start nginx
+
+echo "[OK] Nginx ready"

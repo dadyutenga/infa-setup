@@ -1,45 +1,27 @@
-#!/bin/bash
-### MODULE: PostgreSQL
+#!/usr/bin/env bash
+set -euo pipefail
 
-run_postgres() {
-    if command -v psql >/dev/null 2>&1; then
-        local service_name="postgresql"
-        if systemctl list-unit-files | grep -q "postgresql@"; then
-            local latest_cluster
-            latest_cluster=$(pg_lsclusters 2>/dev/null | awk 'NR==1 {print $1"-"$2}')
-            if [[ -n "$latest_cluster" ]]; then
-                service_name="postgresql@$latest_cluster"
-            fi
-        fi
-        log_skip "PostgreSQL already installed. Ensuring service is enabled."
-        run_cmd "Ensuring PostgreSQL service" systemctl enable --now "$service_name"
-        return 0
+if command -v psql >/dev/null 2>&1; then
+  echo "[SKIP] PostgreSQL already installed"
+else
+  echo "[INFO] Installing PostgreSQL"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y postgresql postgresql-contrib
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -y install postgresql-server postgresql-contrib
+    if [ ! -d /var/lib/pgsql/data/base ]; then
+      /usr/bin/postgresql-setup --initdb --unit postgresql
     fi
+  else
+    echo "[ERROR] Unsupported package manager for PostgreSQL installation"
+    return 1
+  fi
+fi
 
-    update_package_index
+echo "[INFO] Enabling and starting PostgreSQL"
+systemctl enable postgresql
+systemctl start postgresql
 
-    if [[ "$PACKAGE_MANAGER" == "apt" ]]; then
-        install_packages postgresql postgresql-contrib
-    elif [[ "$PACKAGE_MANAGER" == "dnf" ]]; then
-        install_packages postgresql-server postgresql-contrib
-        if [[ ! -d /var/lib/pgsql/data/base ]]; then
-            run_cmd "Initializing PostgreSQL database" postgresql-setup --initdb --unit postgresql
-        fi
-    else
-        log_error "Unsupported package manager for PostgreSQL."
-        return 1
-    fi
-
-    local service_name="postgresql"
-    if systemctl list-unit-files | grep -q "postgresql@"; then
-        local latest_cluster
-        latest_cluster=$(pg_lsclusters 2>/dev/null | awk 'NR==1 {print $1"-"$2}')
-        if [[ -n "$latest_cluster" ]]; then
-            service_name="postgresql@$latest_cluster"
-        fi
-    fi
-
-    run_cmd "Enabling and starting PostgreSQL" systemctl enable --now "$service_name"
-    log_ok "PostgreSQL installation complete."
-    return 0
-}
+echo "[OK] PostgreSQL ready"

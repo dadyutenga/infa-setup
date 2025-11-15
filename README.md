@@ -1,84 +1,87 @@
-# Infra Setup Automation Toolkit
+# Infrastructure Setup Automation
 
-This repository provisions a complete server stack on supported Linux distributions with a single non-interactive command. The master script detects the operating system, installs required repositories, configures services, and enables firewalls without ever prompting for user input.
+This repository provisions a common infrastructure stack (Docker, Nginx, MariaDB, PostgreSQL, Redis, developer languages, Uptime-Kuma, and firewall hardening) across multiple Linux distributions with a single non-interactive script.
 
-## ✅ Supported Operating Systems
+## Supported Operating Systems
+- Debian 12 (primary target)
+- Debian 11
+- Ubuntu 20.04 LTS
+- Ubuntu 22.04 LTS
+- Ubuntu 24.04 LTS
+- AlmaLinux 9
 
-| Distribution | Minimum Version | Package Manager |
-|--------------|-----------------|-----------------|
-| Debian       | 11 (Bullseye)   | apt |
-| Debian       | 12 (Bookworm)   | apt |
-| Ubuntu       | 20.04 LTS       | apt |
-| Ubuntu       | 22.04 LTS       | apt |
-| AlmaLinux    | 9               | dnf |
-
-The script exits with a clear error if it encounters an unsupported platform.
-
-## 🚀 Quick Start
+## Quick Start
+Clone the repository and run the master script with elevated privileges:
 
 ```bash
-git clone <repo-url>/infra-setup.git
-cd infra-setup
 sudo ./infra-setup.sh
 ```
 
-Running as `root` or through `sudo` is required because packages, services, and firewall rules are managed system-wide. No environment variables or interactive answers are needed.
+The script automatically detects the host operating system, installs each module only when required, and logs all actions. No user prompts are shown during execution.
 
-## 🔄 What Gets Installed
-
-Modules execute sequentially to provide the following components:
-
-| Order | Module | Purpose |
-|-------|--------|---------|
-| 1 | `os-detect` | Identify distribution, version, and package manager |
-| 2 | `docker` | Install Docker Engine, Buildx, and Compose plugin from official repositories |
-| 3 | `nginx` | Install and enable the Nginx web server |
-| 4 | `mysql` | Install MySQL Server (MariaDB on AlmaLinux) |
-| 5 | `postgres` | Install PostgreSQL server and contrib packages |
-| 6 | `redis` | Install Redis server |
-| 7 | `rabbitmq` | Install RabbitMQ server from official repositories and enable management plugin |
-| 8 | `languages` | Install Node.js LTS, Python 3, Go (latest), and PHP 8.3 with common extensions |
-| 9 | `uptime-kuma` | Deploy Uptime-Kuma into `/opt/uptime-kuma` with a systemd service |
-| 10 | `firewall` | Configure UFW (Debian/Ubuntu) or firewalld (AlmaLinux) with required ports |
-
-Each module checks whether the target software already exists. If it does, the module prints `[SKIP]` and moves on after ensuring the associated service is enabled.
-
-## 📝 Logging
-
-- **Global log:** `logs/infra-install.log` captures every console message across runs.
-- **Module logs:** `logs/<module>.log` include detailed command output for each module execution.
-
-Log files are overwritten on each run to keep the repository tidy. Retain copies if you need historical records.
-
-## 🔐 Firewall Rules
-
-The `firewall` module automatically opens the following TCP ports:
-
-- 22 (SSH)
-- 80 (HTTP)
-- 443 (HTTPS)
-- 3001 (Uptime-Kuma)
-- 5672 (RabbitMQ)
-- 6379 (Redis)
-
-UFW is used on Debian/Ubuntu systems and firewalld is used on AlmaLinux.
-
-## 🧰 Repository Layout
-
+## Repository Layout
 ```
-infra-setup.sh        # Master entrypoint
-logs/                 # Log directory (populated at runtime)
-modules/
-  os-detect.sh
-  docker.sh
-  nginx.sh
-  mysql.sh
-  postgres.sh
-  redis.sh
-  rabbitmq.sh
-  languages.sh
-  uptime-kuma.sh
-  firewall.sh
+infra-setup/
+  infra-setup.sh         # Master automation script
+  logs/                  # Aggregated and per-module logs
+  modules/               # Self-contained module installers
+    os-detect.sh         # OS detection and exports
+    docker.sh            # Docker Engine + plugins
+    nginx.sh             # Nginx web server
+    mysql.sh             # MariaDB server
+    postgres.sh          # PostgreSQL database
+    redis.sh             # Redis cache
+    languages.sh         # Node.js, Python, Go, PHP toolchain
+    uptime-kuma.sh       # Uptime-Kuma container deployment
+    firewall.sh          # UFW/Firewalld configuration
 ```
 
-Clone, execute, and receive a fully bootstrapped infrastructure stack with zero manual steps.
+## Modules Overview
+Each module is sourced by `infra-setup.sh`, logs to `logs/infra.log` and its own file in `logs/modules/`, and performs idempotent installation:
+
+| Module | Description |
+| ------ | ----------- |
+| os-detect | Exports `OS_FAMILY` and `OS_VERSION` for downstream modules. |
+| docker | Installs Docker Engine, Buildx, Compose plugin, and starts the daemon. |
+| nginx | Installs and starts Nginx. |
+| mysql | Installs MariaDB (or MySQL if present) and enables the service. |
+| postgres | Installs PostgreSQL and initializes the service. |
+| redis | Installs Redis and ensures it is running. |
+| languages | Installs Node.js/npm, Python3/pip, Go (tarball), and PHP 8.3. |
+| uptime-kuma | Deploys the Uptime-Kuma Docker container with persistent data under `/opt/uptime-kuma`. |
+| firewall | Configures UFW (Debian/Ubuntu) or firewalld (AlmaLinux) with the required ports. |
+
+Every module first checks whether its component already exists. When it is already present, the module prints `[SKIP]` and exits without changes.
+
+## Logging
+- `logs/infra.log` aggregates the combined output from all modules.
+- `logs/modules/<module>.log` contains the detailed log for each individual module.
+- Logs are appended on every run. Remove the files if you need a clean slate before re-running the installer.
+
+## Customising Modules
+The execution order is defined inside `infra-setup.sh` in the `modules` array. To disable a module temporarily, remove it from the list or comment it out:
+
+```bash
+modules=(
+  "os-detect"
+  "docker"
+  # "nginx"        # Example: disable Nginx
+  "mysql"
+  ...
+)
+```
+
+Ensure that `os-detect` remains first so that other modules receive `OS_FAMILY` and `OS_VERSION` exports.
+
+## Troubleshooting
+- **Script exits immediately**: Confirm you are running with `sudo` so that package managers and systemd can make changes.
+- **Package installation fails**: Check the relevant log file under `logs/modules/` for detailed error output. Re-run after resolving repository or network issues.
+- **Firewall configuration errors**: Ensure no other firewall service is conflicting (e.g., disable third-party firewalls before running the script).
+- **Docker commands fail**: Verify that the Docker service is active (`systemctl status docker`) and re-run the module if needed.
+- **Uptime-Kuma already running**: The module prints `[SKIP]` when the Docker container named `uptime-kuma` already exists.
+
+## Updating the Repository
+1. Pull the latest changes: `git pull`.
+2. Review updates in `infra-setup.sh` and the `modules/` directory.
+3. Run `sudo ./infra-setup.sh` again to apply enhancements. All modules remain idempotent and will skip components that are already present.
+

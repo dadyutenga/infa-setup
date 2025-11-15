@@ -1,33 +1,29 @@
-#!/bin/bash
-### MODULE: Redis
+#!/usr/bin/env bash
+set -euo pipefail
 
-run_redis() {
-    local service_name="redis-server"
-    if command -v redis-server >/dev/null 2>&1; then
-        if systemctl list-unit-files | grep -q "redis.service"; then
-            service_name="redis"
-        fi
-        log_skip "Redis already installed. Ensuring service is enabled."
-        run_cmd "Ensuring Redis service" systemctl enable --now "$service_name"
-        return 0
-    fi
+if command -v redis-server >/dev/null 2>&1; then
+  echo "[SKIP] Redis already installed"
+else
+  echo "[INFO] Installing Redis"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y redis-server
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -y install redis
+  else
+    echo "[ERROR] Unsupported package manager for Redis installation"
+    return 1
+  fi
+fi
 
-    update_package_index
-    if [[ "$PACKAGE_MANAGER" == "apt" ]]; then
-        install_packages redis-server
-    elif [[ "$PACKAGE_MANAGER" == "dnf" ]]; then
-        install_packages redis
-        service_name="redis"
-    else
-        log_error "Unsupported package manager for Redis."
-        return 1
-    fi
+echo "[INFO] Enabling and starting Redis"
+if systemctl list-unit-files | grep -q '^redis-server.service'; then
+  systemctl enable redis-server
+  systemctl start redis-server
+else
+  systemctl enable redis
+  systemctl start redis
+fi
 
-    if systemctl list-unit-files | grep -q "redis.service"; then
-        service_name="redis"
-    fi
-
-    run_cmd "Enabling and starting Redis" systemctl enable --now "$service_name"
-    log_ok "Redis installation complete."
-    return 0
-}
+echo "[OK] Redis ready"
